@@ -1,0 +1,203 @@
+---
+title: "Model Eval"
+author: "Amin Fesharaki"
+date: "6/2/2022"
+output:
+  word_document: default
+  html_document: default
+---
+# The matrix processPredictors contains the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs. yield contains the percent yield for each run. This describes the data for a chemical manufacturing process. Use data imputation, data splitting, and pre-processing steps and train several nonlinear regression models.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning = FALSE}
+library(AppliedPredictiveModeling)
+library(Hmisc)
+library(caret)
+library(RANN)
+data(ChemicalManufacturingProcess)
+```
+
+
+```{r Split}
+#Split Data Set into train & test
+set.seed(2)
+# outcome in Yields column located in the first column 
+Yield <- ChemicalManufacturingProcess[,1]
+Data <- ChemicalManufacturingProcess[,2:ncol(ChemicalManufacturingProcess)]
+
+set.seed(2)
+#Stratified Sample Partition with a .75/.25 split
+Sample <- createDataPartition(Yield, p=.75, list=FALSE)
+#Split Data into Test and Train Data Sets
+set.seed(2)
+train_x <- ChemicalManufacturingProcess[Sample,-1]
+test_x <- ChemicalManufacturingProcess[-Sample,-1]
+#Turn into data frame for preprocess
+train_y <-ChemicalManufacturingProcess[Sample,1]
+test_y<- ChemicalManufacturingProcess[-Sample,1]
+```
+
+```{r}
+#PreProcess the data
+tran <- preProcess(train_x,
+                    method = c( "center", "scale", "knnImpute", 
+                    "nzv","corr"))
+train_xTran <- predict(tran,train_x)
+test_xTran <- predict(tran,test_x)
+```
+Data was split using stratified sampling with a .75/.25 test/train split. PreProcessing using following methods: centered & scaled, imputed missing data using knnImpute, excluded near zero variance predictors, removed highly correlated predictors, and applied Box-Cox transformations.  
+
+```{r Cross Validation}
+#Perform 10-fold Cross Validation for models
+indx <- createFolds(train_y, returnTrain = TRUE)
+ctrl <- trainControl(method = "cv", index = indx)
+```
+
+
+#### Neural Network
+```{r Neural Network}
+#Parameter Setup
+set.seed(2)
+nnetGrid <- expand.grid(decay = c(0, .1, 1, 2), 
+                        size = c(3, 6, 12, 15))
+MaxSize <- max(nnetGrid$size)
+nwts <- 1*(MaxSize*(length(train_x)+1) + MaxSize + 1) #For MaxNWTS
+#Neural Network Model Tuning
+set.seed(2)
+nnetTune <- train(x = train_xTran, y = train_y,
+                  method = "nnet",
+                  tuneGrid = nnetGrid,
+                  trControl = ctrl,
+                  preProc = c("BoxCox", "center", "scale"),
+                  linout = TRUE,
+                  trace = FALSE, 
+                  MaxNWts = nwts,
+                  maxit = 1000)
+#Display Optimal Tuning Parameters
+nnet_bestTune <- nnetTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were size =", nnet_bestTune[,1], "and decay =", nnet_bestTune[,2])
+#Plot RMSE
+plot(nnetTune, main = "NNet")
+# Store Predictions 
+set.seed(2)
+Results <- data.frame(obs = test_y,
+                          NNet = predict(nnetTune, test_xTran)) 
+```
+
+#### Multivariate Adaptive Regression Splines
+```{r }
+#MARS Tuning 
+set.seed(2)
+marsTune <- train(x = train_xTran, y = train_y,
+                  method = "earth",
+                  tuneGrid = expand.grid(degree = 1:3, nprune = 2:24),
+                  preProc = c("BoxCox","center", "scale"),
+                  trControl = ctrl)
+#Display Optimal Tuning Parameters
+mars_bestTune <- marsTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were nprune =", mars_bestTune[,1], "and degree =", mars_bestTune[,2])
+#Plot RMSE
+plot(marsTune, main = "MARS")
+# Store Predictions
+set.seed(2)
+Results$MARS <- predict(marsTune, test_xTran)
+```
+#### Support Vector Machines (Radial)
+```{r SVM Radial}
+#SVM Radial Tuning
+set.seed(2)
+svmRTune <- train(x = train_xTran, y = train_y,
+                  method = "svmRadial",
+                  tuneLength = 9,
+                   preProc = c("BoxCox","center", "scale"),
+                  trControl = ctrl)
+#Display Optimal Tuning Parameters
+svmR_bestTune <- svmRTune$bestTune
+cat("Tuning parameter 'sigma' was held constant at a value of =", svmR_bestTune[,1])
+cat("\nRMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were sigma =", svmR_bestTune[,1], "and C =", svmR_bestTune[,2])
+#Plot RMSE
+plot(svmRTune, main = "SVM (Radial)", scales = list(x = list(log = 2))) 
+#Store Predictions
+set.seed(2)
+Results$SVMr <- predict(svmRTune, test_xTran)
+```
+#### Support Vector Machines (Poly)
+```{r SVM Poly}
+set.seed(2)
+# Parameter Setup
+svmGrid <- expand.grid(degree = 1:3, 
+                       scale = c(0.001, 0.005, 0.01), 
+                       C = 2^(-2:7))
+set.seed(2)
+svmPTune <- train(x = train_xTran, y = train_y,
+                  method = "svmPoly",
+                  tuneGrid = svmGrid,
+                   preProc = c("BoxCox","center", "scale"),
+                  trControl = ctrl)
+#Display Optimal Tuning Parameters
+svmP_bestTune <- svmPTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were degree =", svmP_bestTune[,1], ", scale =", svmP_bestTune[,2] ,"and C =", svmP_bestTune[,3])
+#Plot RMSE
+plot(svmPTune, main = "SVM (Poly)",
+     scales = list(x = list(log = 2), 
+                   between = list(x = .5, y = 1)))   
+#Store Predictions
+set.seed(2)
+Results$SVMp <- predict(svmPTune, test_xTran)
+```
+#### K-Nearest Neighbors
+```{r knn}
+
+set.seed(2)
+knnTune <- train(x = train_xTran, y = train_y,
+                 method = "knn",
+                 tuneGrid = data.frame(k = 1:20),
+                  preProc = c("BoxCox","center", "scale"),
+                 trControl = ctrl)
+                 
+#Display Optimal Tuning Parameters
+knn_bestTune <- knnTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model was k =", knn_bestTune[,])
+#Plot RMSE
+plot(knnTune)
+#Store Predictions
+set.seed(2)
+Results$Knn <- predict(knnTune, test_xTran, main = "KNN")
+```
+
+## A) Which nonlinear regression model gives the optimal resampling and test set performance? 
+```{r Compare Models}
+set.seed(2)
+# Calculate RMSE, R-Squared, MAE for each model test results
+NNet <- postResample(pred = Results$NNet, obs = Results$obs) #NNet
+MARS <- postResample(pred = Results$MARS, obs = Results$obs) #Mars
+SVM_Radial <-  postResample(pred = Results$SVMr, obs = Results$obs) #SVM (Radial)
+SVM_Poly <- postResample(pred = Results$SVMp, obs = Results$obs) #SVM (Poly)
+KNN <- postResample(pred = Results$Knn, obs = Results$obs) #Knn
+
+# Compare Models (RMSE, R^2, MAE)
+Model_Results <- as.data.frame(rbind(NNet, MARS, SVM_Radial, SVM_Poly, KNN))
+Model_Results <- round(Model_Results,4)
+Model_Results
+```
+According to the table above, MARS is the most optimal nonlinear regression model. In regards to test set performance, Mars) has the lowest RMSE value at 1.0872 and the highest Rsquared value at 0.6637.  Furthermore, MARS optimal tuning parameters were set at nprune - 12 and degree = 2. 
+
+## Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? 
+
+```{r Variable Importance}
+marsImp <- varImp(marsTune, scale = FALSE)
+plot(marsImp, top = 10, main = "Top 10 Predictor Importance for MARS") 
+```
+As shown in the 'Top 10 Predictor Importance for MARS  Plot, the two most important predictors are Manufacturing Process 32 and Manufacturing Process 09. Furthermore, the Manufacturing Process variables dominate the predictor importance list of all variables used for modeling.   
+
+## How do the top ten important predictors compare to the top ten predictors from the optimal linear model you built in module 3 assignment? 
+
+The top ten important predictors for Mars and last weeks optimal linear model (from the book solutions posted), are very similar. The same top 3 predictors are used as well as having manufacturing process variables dominate the list. Both plots show 7 out of 10 predictors being manufacturing process and 3 out of 10 being biological material predictors. The only difference is that there is that the first biological material predictor lands in the 4th most important predictor for mars while the first time it appears on last weeks model is at the 8th spot. 

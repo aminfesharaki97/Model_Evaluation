@@ -1,0 +1,256 @@
+---
+title: "Question 3.1 - ADS 503"
+author: "Amin Fesharaki"
+date: "5/24/2022"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+# A Tecator Infratec Food and Feed Analyzer instrument was used to analyze 215 samples of meat across 100 frequencies. In addition to an IR profile, analytical chemistry determined the percent content of water, fat, and protein for each sample. If we can establish a predictive relationship between IR spectrum and fat content, then food scientists could predict a sample’s fat content with IR instead of using analytical chemistry. This would provide costs savings since analytical chemistry is a more expensive, time-consuming process
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE, warning=FALSE}
+library(caret)
+library(corrplot) #Correlation
+library(MASS) #Robust Linear Regression
+library(pls) # PLS and PCR
+library(elasticnet) # Ridge and Lasso
+data(tecator)
+#The matrix absorp contains the 100 absorbance values for the 215 samples, while matrix endpoints contain the percent of moisture, fat, and protein in columns 1–3, respectively.
+```
+
+## B)	In this example, the predictors are the measurements at the individual frequencies. Because the frequencies lie in a systematic order (850–1,050 nm), the predictors have a high degree of correlation. Hence, the data lie in a smaller dimension than the total number of predictors (100). Use PCA to determine the effective dimension of these data. What is the effective dimension? 
+
+```{r PreProcess Absorp}
+#PCA Analysis for Absorp Data
+SC_absorp_pca <- prcomp(absorp, scale = TRUE, center = TRUE) # Scale & Center Data
+SC_absorp_pca_var <- SC_absorp_pca$sdev^2 # Measure Variance
+PCA_absorp_var <- round(SC_absorp_pca_var*100/sum(SC_absorp_pca_var),3) # PCA Variance Anaylsis
+PCA_absorp_cum <-round(cumsum(SC_absorp_pca_var)*100/sum(SC_absorp_pca_var),3) # Cumulative Variance
+cat('Absorp PCA Variance Anaylsis:')
+head(PCA_absorp_var,8)
+cat('Absorp PCA Cumulative Variance')
+head(PCA_absorp_cum,8)
+print('Top 8 components capture 100% variance')
+
+```
+The effective dimensions to encompass 99% of the variance in the absorp data would be 2 components. If its desired to have an effective dimension to encompass 100% of the variance, then 8 components would be selected. In addition, the simplest model than be built with 1 component since it captures 98.62% of the variance. In conclusion, **8 components** will be chosen since it captures 100% of the data.       
+
+## C) Split the data into a training and a test set, pre-process the data, and build each variety of models described in this chapter. For those models with tuning parameters, what are the optimal values of the tuning parameter(s)? 
+
+```{r }
+#Create column names and a single data frame of the data
+colnames(endpoints) = c('Percent.Moisture', 'Percent.Fat', 'Percent.Protein' ) #Label endpoint column
+Tecator_df <- data.frame(endpoints, absorp) # Combine data sets for modeling in later steps
+```
+
+```{r}
+# 2 sets of training & testing data will be made: absorp and endpoints. Split the data with stratified random sapling with a 80/20 split
+set.seed(1)
+
+# There are 3 models that can be made: Predicting percent moisture, fat, and protein
+Moisture_trainingRows <- createDataPartition(Tecator_df[,1], p = .80, list = FALSE) #Model to Predict Percent Moisture 
+Fat_trainingRows <- createDataPartition(Tecator_df[,2], p = .80, list = FALSE) #Model to Predict Percent Fat    
+Protein_trainingRows <- createDataPartition(Tecator_df[,3], p = .80, list = FALSE) #Model to Predict Percent Protein
+
+set.seed(1)
+# Subset the data into training and testing: absorp and endpoints(Moisture)
+train_absorp <- absorp[Moisture_trainingRows, ]
+test_absorp <- absorp[-Moisture_trainingRows, ]
+train_moisture_end <- endpoints[Moisture_trainingRows, ]
+test_moisture_end <- endpoints[-Moisture_trainingRows, ]
+
+```
+
+There are 3 models that can be made with the Tecator data: predicting percent moisture, fat, and protein. The following code chose to model the data to predict percent moisture. Similar procedures can be used to predict fat and protein.  
+
+```{r CenterScale}
+# Center_Scale testing and training sets
+SC_train_absorp <- scale(train_absorp, center = TRUE, scale = TRUE)
+SC_test_absorp <- scale(test_absorp, center = TRUE, scale = TRUE)
+SC_train_moisture <- scale(train_moisture_end, center = TRUE, scale = TRUE)
+SC_test_moisture <- scale(test_moisture_end, center = TRUE, scale = TRUE)
+
+# Subset data frame to only include the target variable
+SC_train_y <- subset(SC_train_moisture, select = Percent.Moisture)
+SC_test_y <- subset(SC_test_moisture, select = Percent.Moisture)
+```
+
+```{r Control}
+set.seed(1)
+# Create a control function that will be used across model (Cross Validation)
+indx <- createFolds(SC_train_moisture, returnTrain = TRUE)
+ctrl <- trainControl(method = "cv", index = indx) 
+```
+
+```{r Correlation, include=FALSE}
+Scale_Center_absorp <- scale(absorp, center = TRUE, scale = TRUE) #Center and Scale
+correlations <- cor(Scale_Center_absorp)
+corrplot(correlations, order = "hclust")
+highCorr <- findCorrelation(correlations, cutoff = .70) # Find highly correlated predictors
+length(highCorr) #There are 99 (out of 100) highly correlated variables
+```
+
+```{r PCA Modeling}
+# Set up training Data for modeling
+set.seed(1)
+#Transform into data frame
+SC_train_x <- as.data.frame(SC_train_absorp[,1:8]) # PCA concluded that the 4 components is the effective dimensions
+SC_train_y <- as.data.frame(SC_train_y)
+
+#Combine training sets into 1 training data frame
+Train_df <- SC_train_x
+Train_df$Moisture <- SC_train_y$Percent.Moisture
+Train_df <- data.frame(Train_df)
+colnames(Train_df) = c('X1', 'X2', 'X3', 'X4', 'X5','X6', 'X7', 'X8', 'Moisture')
+```
+
+```{r OLS}
+# Ordinary Linear Regression
+set.seed(1)
+SLS <- lm(formula = Moisture ~ ., data = Train_df) # Simple Least Squares
+#print("******Summary of Simple Least Squares - OLS******")
+SLS_sum <- summary(SLS)
+Robust <- rlm(formula = Moisture ~ ., data = Train_df) # Robust Linear Regression
+#print("******Summary of Robust Linear Regression - OLS******")
+Robust_sum <- summary(Robust)
+```
+
+```{r Predict}
+
+# Predict Values using Model
+set.seed(1)
+SC_test_x_df <- data.frame(SC_test_absorp)
+SLS_Prediction <- predict(SLS, SC_test_x_df)
+Robust_Prediction <- predict(Robust, SC_test_x_df)
+
+# Evaluation Metrics
+set.seed(1)
+SC_test_y_df <-  data.frame(SC_test_y)
+SLS_Metrics <- data.frame(obs = SC_test_y_df$Percent.Moisture, pred = SLS_Prediction) 
+print('Simple Least Squares Model Performance Metrics')
+defaultSummary(SLS_Metrics)
+Robust_Metrics <- data.frame(obs = SC_test_y_df$Percent.Moisture, pred = Robust_Prediction) 
+print('Robust Linear Regression Model Performance Metrics')
+defaultSummary(Robust_Metrics)
+```
+```{r Tuning}
+SC_train_absorp_df <- data.frame(SC_train_absorp) # Turn into Data Frame
+
+
+#PCR Tune
+set.seed(1)
+pcrTune <- train(x = SC_train_absorp_df, y = Train_df$Moisture, 
+                 method = "pcr",
+                 tuneLength =  40,
+                 trControl = ctrl)
+
+#PCR Prediction
+PCR_Prediction <- predict(pcrTune, SC_test_x_df)
+
+#PLS Tune
+set.seed(1)
+plsTune <- train(x = SC_train_absorp_df, y = Train_df$Moisture, 
+                 method = "pls",
+                 tuneLength =  40,
+                 trControl = ctrl)
+
+#PLS Prediction
+PLS_Prediction <- predict(plsTune, SC_test_x_df)
+```
+
+```{r}
+#pcrTune
+#plsTune
+```
+**PCR: RMSE was used to select the optimal model using the smallest value. The final value used for the model was ncomp = 26.**  
+
+**PLS: RMSE was used to select the optimal model using the smallest value.The final value used for the model was ncomp = 14.**
+```{r Comparaison}
+
+#Compare pls and pcr 
+set.seed(1)
+resamp <- resamples(list(PCR = pcrTune, PLS = plsTune))
+summary(resamp)
+
+# Combine results into 1 data frame to analyze the PLS and PCR Tuning.
+plsResamples <- plsTune$results
+plsResamples$Model <- "PLS"
+pcrResamples <- pcrTune$results
+pcrResamples$Model <- "PCR"
+
+plsPlotData <- rbind(plsResamples, pcrResamples)
+
+
+xyplot(RMSE ~ ncomp,
+       data = plsPlotData,
+       #aspect = 1,
+       xlab = "# Components",
+       ylab = "RMSE (Cross-Validation)",
+       auto.key = list(columns = 2),
+       groups = Model,
+       type = c("o", "g"))
+
+#Plotting the Predictor Importance
+
+plsImp <- varImp(plsTune, scale = FALSE)
+plot(plsImp, top = 25, scales = list(y = list(cex = .95)))
+
+pcrImp <- varImp(pcrTune, scale = FALSE)
+plot(pcrImp, top = 25, scales = list(y = list(cex = .95)))
+
+```
+```{r Penalized Regression Models}
+#Tune Ridge Model
+set.seed(1)
+
+ridgeGrid <- expand.grid(lambda = seq(0, .1, length = 20))
+set.seed(1)
+ridgeTune <- train(x = as.matrix(SC_train_absorp_df), y = Train_df$Moisture,
+                   method = "ridge",
+                   tuneGrid = ridgeGrid)
+print(update(plot(ridgeTune), xlab = "Penalty"))
+# Predict with Ridge Model
+Ridge_Prediction <- predict(ridgeTune, SC_test_x_df)
+```
+```{r}
+ridgeTune
+```
+**Ridge: RMSE was used to select the optimal model using the smallest value. The final value used for the model was lambda = 0.005263158.**  
+```{r}
+# Lasso Model
+set.seed(1)
+
+Lasso <- lars(x = as.matrix(SC_train_absorp_df), y = Train_df$Moisture, type = "lasso", normalize = TRUE)
+
+#Predict using Lasso
+Lasso_Prediction <- predict(Lasso, SC_test_x_df)
+head(summary(Lasso),5)
+```
+```{r}
+#Elastic Net Model
+set.seed(1)
+enetGrid <- expand.grid(lambda = c(0, 0.01, .1), 
+                        fraction = seq(.05, 1, length = 20))
+set.seed(1)
+enetTune <- train(x = SC_train_absorp_df, y = Train_df$Moisture,
+                   method = "ridge",
+                   tuneGrid = ridgeGrid)
+plot(enetTune)
+```
+```{r}
+enetTune
+```
+**Elastic (enet): RMSE was used to select the optimal model using the smallest value. The final value used for the model was lambda = 0.005263158.**    
+
+## D) Which model has the best predictive ability? Is any model significantly better or worse than the others?  
+From the outputs above, PLS model showed the highest Rsquared value at .955. However, PCR resulted in a Rsquared value of .954, making both PLS and PCR viable options. Ridge had a Rsquared of .915 and elastic had a Rsquared .915. The two worst models that was performed were Simple least squares and robust linear regression with .816 and .831 respectively.  
+
+
+## E)	Explain which model you would use for predicting the fat content of a sample.  
+Based on the explanation on part D, I would choose either the PLS or PCR model.   

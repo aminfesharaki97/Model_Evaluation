@@ -1,0 +1,177 @@
+---
+title: ""
+author: "Amin Fesharaki"
+date: "5/24/2022"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+# Developing a model to predict permeability could save significant resources for a pharmaceutical company while at the same time more rapidly identifying molecules that have a sufficient permeability to become a drug:
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE, warning=FALSE}
+library(AppliedPredictiveModeling)
+library(caret)
+library(pls) 
+data(permeability)
+# The matrix fingerprints contain the 1,107 binary molecular predictors for the 165 compounds, while the permeability matrix contains the permeability response.
+```
+
+
+## B)	The fingerprint predictors indicate the presence or absence of substructures of a molecule and are often sparse, meaning that relatively few of the molecules contain each substructure. Filter out the predictors that have low frequencies using the nearZeroVar function from the caret package. How many predictors are left for modeling?
+
+
+```{r NZV}
+fingerprintsdf <- as.data.frame(fingerprints) # Turn into data frame
+
+#Compute Near Zero Variance for all predictors
+NZV <- nearZeroVar(fingerprints)
+F_fingerprints <- fingerprintsdf[,-NZV] #Filter out NZV predictors
+Predictor_amount <- length(fingerprintsdf) - length(F_fingerprints) #Number of NZV Predictors
+cat(" Original Amount of Predictors in Fingerprints Data set: ", length(fingerprintsdf))
+cat("\n Near Zero Variance Predictors Detected:: ", Predictor_amount)
+cat("\n Total Amount of Predictors after NZV Predictors are Removed: ", length(F_fingerprints))
+
+
+```
+
+## C) Split the data into a training and a test set, pre-process the data, and tune a PLS model. How many latent variables are optimal, and what is the corresponding resampled estimate of R^2?
+
+```{r Splitting}
+set.seed(2)
+
+#Stratified Sample Partition with a .75/.25 split
+Sample <- createDataPartition(permeability, p=.75, list=FALSE)
+
+#Split Data into Test and Train Data Sets
+
+train_perm <- permeability[Sample,]
+test_perm <- permeability[-Sample,]
+
+train_fp <- F_fingerprints[Sample,]
+test_fp <- F_fingerprints[-Sample,]
+
+# Convert to data frames
+test_perm <- as.data.frame(test_perm)
+train_perm <- as.data.frame(train_perm)
+
+# Convert to numeric for postResample
+test_perm_num <- permeability[-Sample,]
+```
+
+```{r PLS}
+set.seed(2)
+
+ctrl <- trainControl(method = "cv", number=5) #5-fold Cross Validation
+
+
+train_df <- data.frame(train_fp, train_perm) #Combine training data
+
+
+#PLS Tune
+set.seed(2)
+plsTune <- train(x = train_fp,  y = train_df$train_perm, 
+                 method = "pls",
+                 tuneLength =  20,
+                 trControl = ctrl,
+                 preProc = c("center", "scale"))
+plsTune
+
+plot(plsTune)
+
+PLS_metric <- plsTune$results[8,] #The final value used for the model was ncomp = 9.
+print(PLS_metric)
+```
+## D) Predict the response for the test set. What is the test set estimate of R^2?
+
+```{r}
+
+#PLS Prediction
+set.seed(2)
+PLS_Prediction <- predict(plsTune, test_fp)
+
+# Calculate RMSE, R-Squared, MAE
+Result_pls <- postResample(pred = PLS_Prediction, obs = test_perm_num)
+Result_pls
+```
+
+## E) Try building other models discussed in this chapter. Do any have better predictive performance?
+
+```{r}
+#PCR Tune
+set.seed(2)
+pcrTune <- train(x = train_fp,  y = train_df$train_perm, 
+                 method = "pcr",
+                 tuneLength =  20,
+                 trControl = ctrl,
+                 preProc = c("center", "scale"))
+
+#PCR Prediction
+set.seed(2)
+PCR_Prediction <- predict(pcrTune, test_fp)
+
+# Calculate RMSE, R-Squared, MAE
+Result_pcr <- postResample(pred = PCR_Prediction, obs = test_perm_num)
+```
+
+
+```{r ridge}
+
+set.seed(2)
+ridgeGrid <- expand.grid(lambda = seq(0, .1, length = 15))
+
+set.seed(2)
+ridgeTune <- train(x = train_fp,  y = train_df$train_perm,
+                   method = "ridge",
+                   tuneGrid = ridgeGrid,
+                   trControl = ctrl,
+                   preProc = c("center", "scale"))
+ridgeTune
+
+# Prediction
+ridge_Prediction <- predict(ridgeTune, test_fp)
+
+# Calculate RMSE, R-Squared, MAE
+Result_ridge <- postResample(pred = ridge_Prediction, obs = test_perm_num)
+
+```
+
+```{r Elastic }
+enetGrid <- expand.grid(lambda = c(0, 0.01, .1), 
+                        fraction = seq(.05, 1, length = 20))
+set.seed(2)
+enetTune <- train(x = train_fp,  y = train_df$train_perm,
+                  method = "enet",
+                  tuneGrid = enetGrid,
+                  trControl = ctrl,
+                  preProc = c("center", "scale"))
+#enetTune
+
+# Prediction
+enet_Prediction <- predict(enetTune, test_fp)
+
+# Calculate RMSE, R-Squared, MAE
+Result_enet <- postResample(pred = enet_Prediction, obs = test_perm_num)
+
+```
+
+```{r}
+# Compare Models (RMSE, R^2, MAE)
+
+Model_Results <- as.data.frame(rbind(Result_pls, Result_pcr, Result_ridge, Result_enet ))
+Model_Results
+```
+Based on the results, the elastic (enet) model has a slightly better predictive ability.  
+
+## F) Would you recommend any of your models to replace the permeability laboratory experiment? 
+
+I would not recommend any of these models to replace PCR since none of the other models had a significant better Rsquare values. 
+
+
+
+

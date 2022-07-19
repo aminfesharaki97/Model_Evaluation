@@ -1,0 +1,188 @@
+---
+title: "Question 2"
+author: "Amin Fesharaki"
+date: "6/2/2022"
+output:
+  word_document: default
+  html_document: default
+---
+# The matrix processPredictors contains the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs. yield contains the percent yield for each run. This describes the data for a chemical manufacturing process. Use data imputation, data splitting, and pre-processing steps and train several nonlinear regression models.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, warning = FALSE}
+library(AppliedPredictiveModeling)
+library(Hmisc)
+library(caret)
+data(ChemicalManufacturingProcess)
+```
+```{r Split}
+#Split Data Set into train & test
+set.seed(2)
+# outcome in Yields column located in the first column 
+Yield <- ChemicalManufacturingProcess[,1] 
+Data <- ChemicalManufacturingProcess[,2:ncol(ChemicalManufacturingProcess)]
+set.seed(2)
+#Stratified Sample Partition with a .75/.25 split
+Sample <- createDataPartition(Yield, p=.75, list=FALSE)
+#Split Data into Test and Train Data Sets
+set.seed(2)
+train_x <- ChemicalManufacturingProcess[Sample,-1]
+test_x <- ChemicalManufacturingProcess[-Sample,-1]
+train_y <- ChemicalManufacturingProcess[Sample,1]
+test_y<- ChemicalManufacturingProcess[-Sample,1]
+```
+
+```{r PreProcess}
+# PreProcess df:
+#Center & Scale, Impute using KNN, Exclude Near Zero Variance Predictors 
+#Remove Highly Correlated Predictors, Perform Box-Cox Transformation for Normal Distribution
+P = c("center", "scale", "knnImpute", "nzv", "corr", "BoxCox" )
+#Clean = preProcess(ChemicalManufacturingProcess, method = P)
+#chem = Clean$data
+```
+The data set was cleaned by the following methods: centered & scaled, imputed missing data using knnImpute, excluded near zero variance predictors, removed highly correlated predictors, and applied Box-Cox transformations.  
+```{r Cross Validation}
+#Perform 10-Fold Cross Validation for models
+ctrl <- trainControl(method = "cv", number=10) 
+```
+
+```
+#### Neural Network
+```{r Neural Network}
+#Parameter Setup
+set.seed(2)
+nnetGrid <- expand.grid(decay = c(0, .1, 1, 2), 
+                        size = c(3, 6, 12, 15))
+MaxSize <- max(nnetGrid$size)
+nwts <- 1*(MaxSize*(length(train_x)+1) + MaxSize + 1) #For MaxNWTS
+#Neural Network Model Tuning
+set.seed(2)
+nnetTune <- train(x = train_x, y = train_y,
+                  method = "nnet",
+                  tuneGrid = nnetGrid,
+                  preProc = P,
+                  trControl = ctrl,
+                  linout = TRUE,
+                  trace = FALSE, 
+                  MaxNWts = nwts,
+                  maxit = 1000)
+#Display Optimal Tuning Parameters
+nnet_bestTune <- nnetTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were size =", nnet_bestTune[,1], "and decay =", nnet_bestTune[,2])
+#Plot RMSE
+plot(nnetTune, main = "NNet")
+# Store Predictions 
+Results <- data.frame(obs = test_y,
+                          NNet = predict(nnetTune, test_x)) 
+```
+#### Multivariate Adaptive Regression Splines
+```{r }
+#MARS Tuning 
+set.seed(2)
+marsTune <- train(x = train_x, y = train_y,
+                  method = "earth",
+                  tuneGrid = expand.grid(degree = 1:2, nprune = 2:24),
+                  trControl = ctrl)
+
+#Display Optimal Tuning Parameters
+mars_bestTune <- marsTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were nprune =", mars_bestTune[,1], "and degree =", mars_bestTune[,2])
+#Plot RMSE
+plot(marsTune, main = "MARS")
+# Store Predictions
+Results$MARS <- predict(marsTune, test_x)
+```
+#### Support Vector Machines (Radial)
+```{r SVM Radial}
+#SVM Radial Tuning
+set.seed(2)
+svmRTune <- train(x = train_x, y = train_y,
+                  method = "svmRadial",
+                  tuneLength = 9,
+                  trControl = ctrl)
+#Display Optimal Tuning Parameters
+svmR_bestTune <- svmRTune$bestTune
+cat("Tuning parameter 'sigma' was held constant at a value of =", svmR_bestTune[,1])
+cat("\nRMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were sigma =", svmR_bestTune[,1], "and C =", svmR_bestTune[,2])
+#Plot RMSE
+plot(svmRTune, main = "SVM (Radial)", scales = list(x = list(log = 2))) 
+#Store Predictions
+Results$SVMr <- predict(svmRTune, test_x)
+```
+#### Support Vector Machines (Poly)
+```{r SVM Poly}
+set.seed(2)
+# Parameter Setup
+svmGrid <- expand.grid(degree = 1:2, 
+                       scale = c(0.01, 0.005, 0.001), 
+                       C = 2^(-2:5))
+set.seed(2)
+svmPTune <- train(x = train_x, y = train_y,
+                  method = "svmPoly",
+                  tuneGrid = svmGrid,
+                  trControl = ctrl)
+#Display Optimal Tuning Parameters
+svmP_bestTune <- svmPTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model were degree =", svmP_bestTune[,1], ", scale =", svmP_bestTune[,2] ,"and C =", svmP_bestTune[,3])
+#Plot RMSE
+plot(svmPTune, main = "SVM (Poly)",
+     scales = list(x = list(log = 2), 
+                   between = list(x = .5, y = 1)))   
+#Store Predictions
+Results$SVMp <- predict(svmPTune, test_x)
+```
+#### K-Nearest Neighbors
+```{r knn}
+
+set.seed(2)
+knnTune <- train(x = train_x, y = train_y,
+                 method = "knn",
+                 tuneGrid = data.frame(k = 1:20),
+                 trControl = ctrl)
+                 
+#Display Optimal Tuning Parameters
+knn_bestTune <- knnTune$bestTune
+cat("RMSE was used to select the optimal model using the smallest value")
+cat("\nThe final values used for the model was k =", knn_bestTune[,])
+#Plot RMSE
+plot(knnTune)
+#Store Predictions
+Results$Knn <- predict(knnTune, test_x, main = "KNN")
+```
+
+## A) Which nonlinear regression model gives the optimal resampling and test set performance? 
+```{r Compare Models}
+set.seed(2)
+# Calculate RMSE, R-Squared, MAE for each model test results
+NNet <- postResample(pred = Results$NNet, obs = Results$obs) #NNet
+MARS <- postResample(pred = Results$MARS, obs = Results$obs) #Mars
+SVM_Radial <-  postResample(pred = Results$SVMr, obs = Results$obs) #SVM (Radial)
+SVM_Poly <- postResample(pred = Results$SVMp, obs = Results$obs) #SVM (Poly)
+KNN <- postResample(pred = Results$Knn, obs = Results$obs) #Knn
+
+# Compare Models (RMSE, R^2, MAE)
+Model_Results <- as.data.frame(rbind(NNet, MARS, SVM_Radial, SVM_Poly, KNN))
+Model_Results <- round(Model_Results,4)
+Model_Results
+```
+According to the table above, the Neural Network Model and SVM (Radial) have the lowest RMSE values of 0.5824 and 0.5844 respectively. In addition, both models have similar Rsquared values: NNet with 0.6949 and SVM (Radial) with 0.6843. Both models are very similar in RMSE sand RSquared values. However, NNET is slightly better with a lower RMSE/MAE value and a higher Rsquared value. Therefore, the most optimal model would be the Neural Network Model. The optimal tuning parameters used in the final Neural Network Model had a size of 15 and a decay of 2 with a training set performance of 0.6315 RMSE, 0.6361 Rsquared, and 0.535 MAE.  
+
+## Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? 
+
+```{r Variable Importance}
+nnetImp <- varImp(nnetTune, scale = FALSE)
+plot(nnetImp, main = "All Predictor Importance for NNet") 
+plot(nnetImp, top = 10, main = "Top 10 Predictor Importance for NNet") 
+```
+As shown in the 'Top 10 Predictor Importance for NNet' Plot, the most important predictors are ManufacturingProcess09, ManufacturingProcess32, BiologicalMaterial05, ManufacturingProcess28, and ManufacturingProcess19. Furthermore, the Manufacturing Process variables dominate the predictor importance list of all variables used for modeling.   
+
+## How do the top ten important predictors compare to the top ten predictors from the optimal linear model you built in module 3 assignment? 
+
+LOOK UP THE ANSWER KEY FOR MODULE 3, FIND THE OPTIMAL LINEAR MODEL, SCREENSHOT THE PLOT, SCREENSHOT THE TOP 10 NNET PLOT if needed, DRAG THEM TOGETHER IN WORD, AND COMPARE THE 2 GRAPHS
