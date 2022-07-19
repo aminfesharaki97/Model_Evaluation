@@ -1,0 +1,158 @@
+---
+title: "Model Evaluation"
+author: "Amin Fesharaki"
+date: "11/14/2021"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r}
+#Import Datasets
+adult_test <- read.csv(file = "/Users/datascience/Desktop/ADS 502 Data Sets/Website Data Sets/adult_ch6_test.csv")
+adult_train <- read.csv(file = "/Users/datascience/Desktop/ADS 502 Data Sets/Website Data Sets/adult_ch6_training.csv")
+library(C50) 
+library(rpart); library(rpart.plot)
+library(caret)
+```
+
+23. Using the training dataset,create aC5.0model (Model1) to predict a customer’s Income using Marital Status and Capital Gains and Losses. Obtain the predicted responses.
+
+```{r}
+# Change the name to eliminate spaces
+colnames(adult_train)[1] <- "maritalStatus"
+
+# Change categorical variables into factors
+adult_train$Income <- factor(adult_train$Income)
+adult_train$maritalStatus <- factor(adult_train$maritalStatus)
+
+# Predictions
+X = data.frame(maritalStatus = adult_train$maritalStatus, Cap_Gains_Losses = adult_train$Cap_Gains_Losses)
+
+
+# C5 model 
+c5 <- C5.0(formula = Income ~ maritalStatus + Cap_Gains_Losses, data = adult_train)
+
+# Graph
+plot(c5)
+
+# Predict
+Predictions = predict(object = c5, newdata = X)
+```
+
+24. Evaluate Model 1 using the test data set. Construct a contingency table to compare the actual and predicted values of Income.
+
+```{r}
+
+# Change categorical variables into factors
+colnames(adult_test)[1] <- "maritalStatus"
+adult_test$Income <- factor(adult_test$Income)
+adult_test$maritalStatus <- factor(adult_test$maritalStatus)
+
+# Predictions
+x_test = data.frame(maritalStatus = adult_test$maritalStatus, Cap_Gains_Losses = adult_test$Cap_Gains_Losses)
+predx <- predict(object = c5, newdata = x_test)
+
+t1 <- table(adult_test$Income, predx)
+row.names(t1) <- c("Actual: 0", "Actual: 1")
+colnames(t1) <- c("Predicted: 0", "Predicted: 1")
+t1 <- addmargins (A = t1, FUN = list(Total = sum), quiet = TRUE)
+t1
+
+```
+
+25. For Model1,recapitulate Table7.4from the text,calculating all of the model evaluation measures shown in the table. Call this table the Model Evaluation Table. Leave space for Model 2.
+
+```{r}
+#MODEL 1#
+# Assigning General Form of Table to matrix values
+TN <- t1[1,1]
+FN <- t1[2,1]
+FP <- t1[1,2]
+TP <- t1[2,2]
+TAN <- t1[1,3]
+TAP <- t1[2,3]
+TPN <- t1[3,1]
+TPP <- t1[3,2]
+GT <- t1[3,3]
+
+# Accuracy
+Acc <- (TN + TP) / (GT)
+# Error Rate
+Error <- 1 - Acc
+# Sensitivity / Recall
+Sens <- TP / TAP
+#Specificity
+Spec <- TN/TAN
+# Precision
+Prec <- TP/TPP
+# F1
+F1 <- 2*((Prec*Sens)/(Prec+Sens))
+# F2
+F2 <- 5*((Prec*Sens)/(4* Prec +Sens))
+cat ("MODEL 1", "\nAccuracy = ", Acc, "\nError =", Error, "\nSensitivity/Recall =", Sens, "\nSpecificity =", Spec, "\nPrecision =", Prec, "\nF1 =", F1, "\nF2 =", F2)
+```
+26. Clearly and completely interpret each of the Model 1 evaluation measures from the Model Evaluation Table.
+
+```{r}
+
+```
+27. Create a cost matrix, called the 3x cost matrix, that specifies a false positive is four times as bad as a false negative
+```{r}
+cost.C5 <- matrix(c(0,4,1,0), byrow =TRUE, ncol =2) 
+#dimnames(cost.C5) <- list (c("0", "1"), c("0", "1"))
+
+```
+28. Using the training data set, build a C5.0 model (Model 2) to predict a customer’s Income using Marital Status and Capital Gains and Losses, using the 3x cost matrix.
+```{r}
+
+c5.cost <- C5.0(Income ~ maritalStatus + Cap_Gains_Losses, data = adult_test, costs = cost.C5)
+
+CostP <- predict(object = c5.cost, newdata = x_test)
+
+```
+29. Evaluate your predictions from Model 2 using the actual response values from the test data set. Add Overall Model Cost and Profit per Customer to the Model Evaluation Table. Calculate all the measures from the Model Evaluation Table.
+```{r}
+
+t2 <- table(adult_test$Income, CostP)
+row.names(t2) <- c("Actual: 0", "Actual: 1")
+colnames(t2) <- c("Predicted: 0", "Predicted: 1")
+t2 <- addmargins (A = t2, FUN = list(Total = sum), quiet = TRUE)
+t2
+```
+
+```{r}
+##MODEL 2##
+# Assigning General Form of Table to matrix values 
+TN2 <- t2[1,1]
+FN2 <- t2[2,1]
+FP2 <- t2[1,2]
+TP2 <- t2[2,2]
+TAN2 <- t2[1,3]
+TAP2 <- t2[2,3]
+TPN2 <- t2[3,1]
+TPP2 <- t2[3,2]
+GT2 <- t2[3,3]
+
+# Accuracy
+Acc2 <- (TN2 + TP2) / (GT2)
+# Error Rate
+Error2 <- 1 - Acc2
+# Sensitivity / Recall
+Sens2 <- TP2 / TAP2
+#Specificity
+Spec2 <- TN2/TAN2
+# Precision
+Prec2 <- TP2/TPP2
+# F1
+F12 <- 2*((Prec2*Sens2)/(Prec2+Sens2))
+# F2
+F22 <- 5*((Prec2*Sens2)/(4* Prec2 +Sens2))
+cat ("MODEL 2", "\nAccuracy = ", Acc2, "\nError =", Error2, "\nSensitivity/Recall =", Sens2, "\nSpecificity =", Spec2, "\nPrecision =", Prec2, "\nF1 =", F12, "\nF2 =", F22)
+```
+
+30. Compare the evaluation measures from Model 1 and Model 2 using the 3x cost matrix. Discuss the strengths and weaknesses of each model.
+
+The accuracy for model 1 is higher (82% versus 72%) and the error rate for model 1 is lower (17% versus 27%). Having better accuracy and lower error rate is a strength for model 1. The strength for model 2 would be emphasizing the negative cost since it is 4 times higher than the false positive cost, therefore potentially saving money/resources/etc. However the error costs for model 2 are unequal which represents one of its weaknesses. Creating two models allows the user to select a model that minimizes/maximises the model cost per record. 
